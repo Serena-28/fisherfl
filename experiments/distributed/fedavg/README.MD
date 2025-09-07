@@ -1,7 +1,7 @@
 
 ## Quick Start
 ```
-CUDA_VISIBLE_DEVICES=0,1,2,3 sh run_fedavg_distributed_pytorch.sh 100 10 resnet18 200 10 64 0.2 cifar10 0.5 5
+CUDA_VISIBLE_DEVICES=0 sh run_fedavg_distributed_pytorch.sh 10 1 resnet18 200 10 64 0.2 cifar10 0.5 5
 ```
 
 ## Usage
