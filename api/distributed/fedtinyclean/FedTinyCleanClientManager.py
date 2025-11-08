@@ -49,6 +49,14 @@ class FedTinyCleanClientManager(ClientManager):
         self.trainer.update_dataset(int(client_index))
         self.__train()
 
+
+    def _merge_keep_local_bn(server_params: dict, local_params: dict):
+        merged = dict(server_params)
+        for k, v in local_params.items():
+            if k.endswith("running_mean") or k.endswith("running_var") or k.endswith("num_batches_tracked"):
+                merged[k] = v
+        return merged
+    
     def handle_message_receive_model_from_server(self, msg_params):
         logging.info("handle_message_receive_model_from_server.")
         model_params = msg_params.get(MyMessage.MSG_ARG_KEY_MODEL_PARAMS)
@@ -59,12 +67,15 @@ class FedTinyCleanClientManager(ClientManager):
         if self.args.is_mobile == 1:
             model_params = transform_list_to_tensor(model_params)
 
+        local_params = self.trainer.trainer.model.state_dict()
+        merged = _merge_keep_local_bn(server_params=model_params, local_params=local_params)
+
         if self.mode in [0, 3]:
             mask_dict = msg_params.get(MyMessage.MSG_ARG_KEY_MODEL_MASKS)
             self.trainer.trainer.model.mask_dict = mask_dict
             self.trainer.trainer.model.apply_mask()
             
-        self.trainer.update_model(model_params)
+        self.trainer.update_model(merged)
         self.trainer.update_dataset(int(client_index))
         self.__train()
         if self.round_idx == self.num_rounds:
