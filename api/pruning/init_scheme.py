@@ -60,9 +60,11 @@ def pruning(model, layer_density_dict, pruning_strategy, mask_dict=None):
                 old_mask = mask_dict[name]
 
             if pruning_strategy in ["mag", "magnitude"]:
-                new_mask_dict[name] = magnitude_prune(weight, old_mask, num_elements, density)
+                # 传入可选的 per-layer fisher
+                F = fisher_dict.get(name) if (fisher_dict is not None and name in fisher_dict) else None
+                new_mask_dict[name] = magnitude_prune(weight, old_mask, num_elements, density, fisher=F, eps=eps)
             elif pruning_strategy in ["random"]:
-                new_mask_dict[name] =  random_prune(old_mask, num_elements, density)
+                new_mask_dict[name] = random_prune(old_mask, num_elements, density)
             elif pruning_strategy in ["structure-mag"]:
                 pass
             else:
@@ -78,9 +80,18 @@ def magnitude_prune(weight, old_mask, num_elements, density):
     num_remain = int(num_elements * density)
     assert old_mask.sum() >= num_remain
 
-    x, idx = torch.sort(torch.abs(weight.data.view(-1)), descending=True)
-    new_mask = torch.zeros_like( old_mask, dtype=old_mask.data.dtype, requires_grad=False )
-    new_mask.data.view(-1)[idx[:num_remain]] = 1.0
+    flat_w = weight.view(-1)
+    if fisher is not None:
+        # Fisher-based：分数 = F * w^2；从大到小保留
+        F_flat = fisher.to(weight.device).view(-1)
+        score = F_flat * (flat_w ** 2) + eps  # eps 仅防极端0
+    else:
+        # 原逻辑：|w|
+        score = torch.abs(flat_w)
+
+    _, idx = torch.sort(score, descending=True)
+    new_mask = torch.zeros_like(old_mask, dtype=old_mask.data.dtype, requires_grad=False, device=weight.device)
+    new_mask.view(-1)[idx[:num_remain]] = 1.0
     return new_mask
 
 def random_prune(old_mask, num_elements, density):
@@ -134,45 +145,118 @@ def sparse_update_step(model, gradients, mask_dict, t, T_end, alpha):
             active_num = (mask_dict[name] == 1).int().sum().item()
             k = int(f_decay(t, alpha, T_end) * active_num)
             # pruning：Find the k  smallest connections among the current active connections and set them to non-active
-            active_indices = (mask_dict[name].view(-1) == 1).nonzero(as_tuple=False).view(-1).cpu()
-            _, prune_indices = torch.topk(torch.abs(param.data.view(-1)[active_indices]), k, largest=False)
+            #active_indices = (mask_dict[name].view(-1) == 1).nonzero(as_tuple=False).view(-1).cpu()
+            #_, prune_indices = torch.topk(torch.abs(param.data.view(-1)[active_indices]), k, largest=False)
             
-            mask_dict[name].view(-1)[active_indices[prune_indices.cpu()]] = 0
+            #mask_dict[name].view(-1)[active_indices[prune_indices.cpu()]] = 0
             
+            active_indices = (mask_dict[name].view(-1) == 1).nonzero(as_tuple=False).view(-1)
+            if active_indices.numel() > 0 and k > 0:
+                flat_w = param.data.view(-1)
+                if fisher_dict is not None and name in fisher_dict:
+                    F_flat = fisher_dict[name].to(param.device).view(-1)
+                    score_active = (F_flat * (flat_w ** 2)).index_select(0, active_indices)
+                else:
+                    score_active = torch.abs(flat_w).index_select(0, active_indices)
+                _, prune_local = torch.topk(score_active, min(k, score_active.numel()), largest=False)
+                mask_dict[name].view(-1)[active_indices[prune_local]] = 0
+
 
             # growing：Find the k  largest gradients connections among the currently inactive connections and set them to active
-            inactive_indices = (mask_dict[name].view(-1) == 0).nonzero(as_tuple=False).view(-1).cpu()
+            #inactive_indices = (mask_dict[name].view(-1) == 0).nonzero(as_tuple=False).view(-1).cpu()
             
-            grad_inactive = gradients[name].abs().view(-1)[inactive_indices].cpu()
-            _, grow_indices = torch.topk(grad_inactive, k, sorted=False)
-            mask_dict[name].view(-1)[inactive_indices[grow_indices.cpu()]] = 1
+            #grad_inactive = gradients[name].abs().view(-1)[inactive_indices].cpu()
+            #_, grow_indices = torch.topk(grad_inactive, k, sorted=False)
+            #mask_dict[name].view(-1)[inactive_indices[grow_indices.cpu()]] = 1
+
+            inactive_indices = (mask_dict[name].view(-1) == 0).nonzero(as_tuple=False).view(-1)
+            if inactive_indices.numel() > 0 and k > 0:
+                g_flat = gradients[name].abs().view(-1)
+                if fisher_dict is not None and name in fisher_dict:
+                    F_flat = fisher_dict[name].to(param.device).view(-1)
+                    # 自然梯度启发：g^2 / (F + eps)
+                    score_inactive = (g_flat ** 2 / (F_flat + eps)).index_select(0, inactive_indices)
+                else:
+                    score_inactive = g_flat.index_select(0, inactive_indices)
+                _, grow_local = torch.topk(score_inactive, min(k, score_inactive.numel()), largest=True, sorted=False)
+                mask_dict[name].view(-1)[inactive_indices[grow_local]] = 1
+    
     return mask_dict
 
-def sparse_pruning_step(model, mask_dict, t, T_end, alpha):
+#def sparse_pruning_step(model, mask_dict, t, T_end, alpha):
+#    for name, param in model.named_parameters():
+#        if name in mask_dict:
+#            active_num = (mask_dict[name] == 1).int().sum().item()
+#            k = int(f_decay(t, alpha, T_end) * active_num)
+#            # pruning：Find the k  smallest connections among the current active connections and set them to non-active
+#            active_indices = (mask_dict[name].view(-1) == 1).nonzero(as_tuple=False).view(-1).cpu()
+#            _, prune_indices = torch.topk(torch.abs(param.data.view(-1)[active_indices]), k, largest=False)
+#            mask_dict[name].view(-1)[active_indices[prune_indices.cpu()]] = 0
+#    return mask_dict
+
+def sparse_pruning_step(model, mask_dict, t, T_end, alpha, fisher_dict=None, eps=1e-8):
     for name, param in model.named_parameters():
         if name in mask_dict:
             active_num = (mask_dict[name] == 1).int().sum().item()
             k = int(f_decay(t, alpha, T_end) * active_num)
-            # pruning：Find the k  smallest connections among the current active connections and set them to non-active
-            active_indices = (mask_dict[name].view(-1) == 1).nonzero(as_tuple=False).view(-1).cpu()
-            _, prune_indices = torch.topk(torch.abs(param.data.view(-1)[active_indices]), k, largest=False)
-            mask_dict[name].view(-1)[active_indices[prune_indices.cpu()]] = 0
+
+            active_indices = (mask_dict[name].view(-1) == 1).nonzero(as_tuple=False).view(-1)
+            if active_indices.numel() == 0 or k <= 0:
+                continue
+
+            flat_w = param.data.view(-1)
+            if fisher_dict is not None and name in fisher_dict:
+                F_flat = fisher_dict[name].to(param.device).view(-1)
+                score_active = (F_flat * (flat_w ** 2)).index_select(0, active_indices)
+            else:
+                score_active = torch.abs(flat_w).index_select(0, active_indices)
+
+            _, prune_local = torch.topk(score_active, min(k, score_active.numel()), largest=False)
+            mask_dict[name].view(-1)[active_indices[prune_local]] = 0
     return mask_dict
 
-def sparse_growing_step(model, gradients, mask_dict, layer_density_dict):
+#def sparse_growing_step(model, gradients, mask_dict, layer_density_dict):
+#    for name, weight in model.named_parameters():
+#        if name in layer_density_dict:
+#            active_num = (mask_dict[name] == 1).int().sum().item()
+#            density = layer_density_dict[name]
+#            num_elements = weight.numel() # the total number for elements
+#            num_remain = int(num_elements * density)
+#            k = num_remain - active_num
+#            # growing：Find the k  largest gradients connections among the currently inactive connections and set them to active
+#            inactive_indices = (mask_dict[name].view(-1) == 0).nonzero(as_tuple=False).view(-1).cpu()
+#            grad_inactive = gradients[name].abs().view(-1)[inactive_indices].cpu()
+#            _, grow_indices = torch.topk(grad_inactive, k, sorted=False)
+#            mask_dict[name].view(-1)[inactive_indices[grow_indices.cpu()]] = 1
+#    return mask_dict
+
+def sparse_growing_step(model, gradients, mask_dict, layer_density_dict, fisher_dict=None, eps=1e-8):
     for name, weight in model.named_parameters():
         if name in layer_density_dict:
             active_num = (mask_dict[name] == 1).int().sum().item()
             density = layer_density_dict[name]
-            num_elements = weight.numel() # the total number for elements
+            num_elements = weight.numel()
             num_remain = int(num_elements * density)
             k = num_remain - active_num
-            # growing：Find the k  largest gradients connections among the currently inactive connections and set them to active
-            inactive_indices = (mask_dict[name].view(-1) == 0).nonzero(as_tuple=False).view(-1).cpu()
-            grad_inactive = gradients[name].abs().view(-1)[inactive_indices].cpu()
-            _, grow_indices = torch.topk(grad_inactive, k, sorted=False)
-            mask_dict[name].view(-1)[inactive_indices[grow_indices.cpu()]] = 1
+            if k <= 0:
+                continue
+
+            inactive_indices = (mask_dict[name].view(-1) == 0).nonzero(as_tuple=False).view(-1)
+            if inactive_indices.numel() == 0:
+                continue
+
+            g_flat = gradients[name].abs().view(-1)
+            if fisher_dict is not None and name in fisher_dict:
+                F_flat = fisher_dict[name].to(weight.device).view(-1)
+                score_inactive = (g_flat ** 2 / (F_flat + eps)).index_select(0, inactive_indices)
+            else:
+                score_inactive = g_flat.index_select(0, inactive_indices)
+
+            topk = min(k, score_inactive.numel())
+            _, grow_local = torch.topk(score_inactive, topk, largest=True, sorted=False)
+            mask_dict[name].view(-1)[inactive_indices[grow_local]] = 1
     return mask_dict
+
 
 def get_erdos_renyi_dist(layer_shape_dict, sparse_layer_set, target_density, is_kernel: bool = True) :
     """
@@ -275,3 +359,4 @@ def get_erdos_renyi_dist(layer_shape_dict, sparse_layer_set, target_density, is_
         prob_dict[name] = prob
 
     return prob_dict
+
