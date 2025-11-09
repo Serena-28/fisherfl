@@ -49,11 +49,13 @@ class FedTinyCleanClientManager(ClientManager):
         self.trainer.update_dataset(int(client_index))
         self.__train()
 
-
+    @staticmethod
     def _merge_keep_local_bn(server_params: dict, local_params: dict):
         merged = dict(server_params)
         for k, v in local_params.items():
             if k.endswith("running_mean") or k.endswith("running_var") or k.endswith("num_batches_tracked"):
+                merged[k] = v
+            elif (k.endswith(".weight") or k.endswith(".bias")) and ("bn" in k.lower() or "batchnorm" in k.lower()):
                 merged[k] = v
         return merged
     
@@ -68,7 +70,7 @@ class FedTinyCleanClientManager(ClientManager):
             model_params = transform_list_to_tensor(model_params)
 
         local_params = self.trainer.trainer.model.state_dict()
-        merged = _merge_keep_local_bn(server_params=model_params, local_params=local_params)
+        merged = self._merge_keep_local_bn(server_params=model_params, local_params=local_params)
 
         if self.mode in [0, 3]:
             mask_dict = msg_params.get(MyMessage.MSG_ARG_KEY_MODEL_MASKS)
