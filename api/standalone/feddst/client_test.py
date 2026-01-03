@@ -124,7 +124,9 @@ def kfac_diag_from_ag(a_in, g_out):
     N = a_in.shape[0]
     A = (a_in.t() @ a_in) / N           # (in,in)
     G = (g_out.t() @ g_out) / N         # (out,out)
-    return torch.diagonal(G)[:, None] * torch.diagonal(A)[None, :]  # (out,in)
+    adiag = torch.diagonal(A)           # (in,)
+    gdiag = torch.diagonal(G)           # (out,)
+    return (adiag[:, None] * gdiag[None, :]).T   # (out,in)  == diag(A ⊗ G) aligned to W
 
 def get_score_dict(obj, attr_name):
     d = getattr(obj, attr_name, None)

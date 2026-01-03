@@ -111,10 +111,10 @@ class Client:
             A = (a.T @ a) / a.shape[0]
             G = (g.T @ g) / g.shape[0]
 
-            # Fisher = torch.kron(G, A)
+            # Fisher = torch.kron(A, G)
             gdiag = torch.diagonal(G)
             adiag = torch.diagonal(A)
-            F_diag = gdiag[:, None] * adiag[None, :]
+            F_diag = (adiag[:, None] * gdiag[None, :]).T
 
             self.score_prune[l] = -gradients[lg] * weights[lg] + 0.5 * (weights[lg] ** 2) * F_diag
             self.score_grow[l] = 0.5 * (gradients[lg] ** 2) / (F_diag + 1e-8) # 1e-8 预防除于零
