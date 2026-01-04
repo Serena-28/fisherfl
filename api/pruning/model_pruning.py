@@ -178,8 +178,8 @@ class SparseModel(nn.Module):
 
         return actual_density, actual_layer_wise_density
     
-    def adjust_mask_dict(self, gradients, t, T_end, alpha):
-        self.mask_dict = sparse_update_step(self.model, gradients, self.mask_dict, t, T_end, alpha)
+    def adjust_mask_dict(self, gradients, t, T_end, alpha, scores=None):
+        self.mask_dict = sparse_update_step(self.model, gradients, self.mask_dict, t, T_end, alpha, scores)
 
     def prune_and_grow_fedsgc(self, weights, masks, gradient_dict, local_direction_map, t, alpha, T_end, lambda_k, beta_k, global_direction_map):
         if global_direction_map is None:

@@ -31,12 +31,13 @@ class FedDSTTrainer(object):
     def train(self, mode, round_idx = None):
         masks = self.trainer.train(self.train_local, self.device, self.args, mode, round_idx)
         weights = self.trainer.get_model_params()
+        scores = self.trainer.get_model_scores()
 
         # transform Tensor to list
         if self.args.is_mobile == 1:
             weights = transform_tensor_to_list(weights)
 
-        return weights, masks, self.local_sample_number
+        return weights, masks, self.local_sample_number, scores["prune"]
 
     # def test(self):
     #     # train data

@@ -77,13 +77,20 @@ class FedDSTAPI(object):
             client_indexes = self._client_sampling(round_idx, self.args.client_num_in_total,  self.args.client_num_per_round)
             logging.info("client_indexes = " + str(client_indexes))
 
-            for idx, client in enumerate(self.client_list):
+            client_prune_scores = []
+            client_grow_scores = []
+
+            for idx, client in enumerate(self.client_list): # 第4步
                 # update dataset
                 client_idx = client_indexes[idx]
                 client.update_local_dataset(client_idx, self.train_data_local_dict[client_idx], None, self.train_data_local_num_dict[client_idx])
 
                 # train on new dataset
                 w, gradient = client.train(w_global, mode, round_idx)
+
+                client_prune_scores.append(client.score_prune)
+                client_grow_scores.append(client.score_grow)
+
                 w_locals.append((client.get_sample_number(), w))
                 gradient_locals.append((client.get_sample_number(), gradient))
 
@@ -92,8 +99,9 @@ class FedDSTAPI(object):
             self.model_trainer.set_model_params(w_global)
 
             #pruning and growing according to the weight and gradient
-            if mode == 2 :
-                gradient_global = self._aggregate(gradient_locals)
+            if mode == 2 : # 第五步
+                gradient_global = self._aggregate(gradient_locals) # 基于所有的客端梯度的平均值
+                # gradient_global -> prune_score_global
                 self.model_trainer.model.adjust_mask_dict(gradient_global, t=round_idx, T_end=self.args.T_end, alpha=self.args.adjust_alpha)
                 #logging.info("mask_dict after pruning and growing = " +str(mask_dict))
                 self.model_trainer.model.to(self.device)

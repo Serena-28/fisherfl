@@ -41,7 +41,7 @@ def generate_layer_density_dict(layer_shape_dict, num_overall_elements, sparse_l
     return layer_density_dict
 
 
-def pruning(model, layer_density_dict, pruning_strategy, mask_dict=None):
+def pruning(model, layer_density_dict, pruning_strategy, score, mask_dict=None):
     if mask_dict is None:
         mask_dict = {}
 
@@ -59,7 +59,9 @@ def pruning(model, layer_density_dict, pruning_strategy, mask_dict=None):
             else:
                 old_mask = mask_dict[name]
 
-            if pruning_strategy in ["mag", "magnitude"]:
+            if pruning_strategy in ["score"]:
+                new_mask_dict[name] = score_prune(score, old_mask, num_elements, density)
+            elif pruning_strategy in ["mag", "magnitude"]:
                 # 传入可选的 per-layer fisher
                 F = fisher_dict.get(name) if (fisher_dict is not None and name in fisher_dict) else None
                 new_mask_dict[name] = magnitude_prune(weight, old_mask, num_elements, density, fisher=F, eps=eps)
@@ -70,6 +72,21 @@ def pruning(model, layer_density_dict, pruning_strategy, mask_dict=None):
             else:
                 raise Exception(f"pruning strategy {pruning_strategy} is not supported")
     return new_mask_dict
+
+def score_prune(score, old_mask, num_elements, density):
+    try:
+        score = score * old_mask
+    except RuntimeError:
+        score = score * old_mask.to(score.device) 
+    num_remain = int(num_elements * density)
+
+    _, idx = torch.sort(score.data.view(-1), descending=True)
+    
+    new_mask = torch.zeros_like(old_mask, dtype=old_mask.dtype, requires_grad=False)
+
+    new_mask.data.view(-1)[idx[:num_remain]] = 1.0
+    
+    return new_mask
 
 def magnitude_prune(weight, old_mask, num_elements, density):
     try:
@@ -136,7 +153,7 @@ def growing(model, mask_dict, growth_percentage):
 
 
 # 
-def sparse_update_step(model, gradients, mask_dict, t, T_end, alpha):
+def sparse_update_step(model, gradients, mask_dict, t, T_end, alpha, scores=None):
     for name, param in model.named_parameters():
         if name in mask_dict:
             #num_elements = mask_dict[name].numel()
@@ -149,15 +166,19 @@ def sparse_update_step(model, gradients, mask_dict, t, T_end, alpha):
             #_, prune_indices = torch.topk(torch.abs(param.data.view(-1)[active_indices]), k, largest=False)
             
             #mask_dict[name].view(-1)[active_indices[prune_indices.cpu()]] = 0
+            # fisher_dict = {}
             
             active_indices = (mask_dict[name].view(-1) == 1).nonzero(as_tuple=False).view(-1)
             if active_indices.numel() > 0 and k > 0:
                 flat_w = param.data.view(-1)
-                if fisher_dict is not None and name in fisher_dict:
-                    F_flat = fisher_dict[name].to(param.device).view(-1)
-                    score_active = (F_flat * (flat_w ** 2)).index_select(0, active_indices)
+
+                if scores is not None:
+                    # F_flat = fisher_dict[name].to(param.device).view(-1)
+                    # score_active = (F_flat * (flat_w ** 2)).index_select(0, active_indices)
+                    score_active = scores["prune"].view(-1).index_select(0, active_indices)
                 else:
                     score_active = torch.abs(flat_w).index_select(0, active_indices)
+                    
                 _, prune_local = torch.topk(score_active, min(k, score_active.numel()), largest=False)
                 mask_dict[name].view(-1)[active_indices[prune_local]] = 0
 
@@ -172,10 +193,12 @@ def sparse_update_step(model, gradients, mask_dict, t, T_end, alpha):
             inactive_indices = (mask_dict[name].view(-1) == 0).nonzero(as_tuple=False).view(-1)
             if inactive_indices.numel() > 0 and k > 0:
                 g_flat = gradients[name].abs().view(-1)
-                if fisher_dict is not None and name in fisher_dict:
-                    F_flat = fisher_dict[name].to(param.device).view(-1)
-                    # 自然梯度启发：g^2 / (F + eps)
-                    score_inactive = (g_flat ** 2 / (F_flat + eps)).index_select(0, inactive_indices)
+
+                if scores is not None:
+                    # F_flat = fisher_dict[name].to(param.device).view(-1)
+                    # # 自然梯度启发：g^2 / (F + eps)
+                    # score_inactive = 0.5 * (g_flat ** 2 / (F_flat + eps)).index_select(0, inactive_indices)
+                    score_inactive = scores["grow"].view(-1).index_select(0, inactive_indices)
                 else:
                     score_inactive = g_flat.index_select(0, inactive_indices)
                 _, grow_local = torch.topk(score_inactive, min(k, score_inactive.numel()), largest=True, sorted=False)

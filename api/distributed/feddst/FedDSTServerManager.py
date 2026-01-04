@@ -75,6 +75,7 @@ class FedDSTServerManager(ServerManager):
         sender_id = msg_params.get(MyMessage.MSG_ARG_KEY_SENDER)
         model_params = msg_params.get(MyMessage.MSG_ARG_KEY_MODEL_PARAMS)
         local_sample_number = msg_params.get(MyMessage.MSG_ARG_KEY_NUM_SAMPLES)
+        prune_scores = msg_params.get(MyMessage.MSG_ARG_KEY_MODEL_SCORES)
         if self.mode in [2, 3]:
             masks = msg_params.get(MyMessage.MSG_ARG_KEY_MODEL_MASKS)
             self.aggregator.add_local_trained_mask(sender_id - 1, masks)
@@ -90,7 +91,7 @@ class FedDSTServerManager(ServerManager):
                 global_mask = self.aggregator.aggregate_mask()
                 # # prune to reach density
                 layer_density_strategy, pruning_strategy = model.strategy.split("_")
-                new_global_mask = pruning(model, model.layer_density_dict, pruning_strategy, mask_dict=global_mask)
+                new_global_mask = pruning(model, model.layer_density_dict, pruning_strategy, score=prune_scores, mask_dict=global_mask)
                 model.mask_dict = new_global_mask
                 model.to(self.aggregator.device)
                 model.apply_mask()

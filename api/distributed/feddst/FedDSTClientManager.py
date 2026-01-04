@@ -73,18 +73,20 @@ class FedDSTClientManager(ClientManager):
             time.sleep(60)
             self.finish()
 
-    def send_model_to_server(self, receive_id, weights, local_sample_num, masks=None):
+    def send_model_to_server(self, receive_id, weights, local_sample_num, scores, masks=None):
         message = Message(MyMessage.MSG_TYPE_C2S_SEND_MODEL_TO_SERVER, self.get_sender_id(), receive_id)
         message.add_params(MyMessage.MSG_ARG_KEY_MODEL_PARAMS, weights)
         message.add_params(MyMessage.MSG_ARG_KEY_MODEL_MASKS, masks)
         message.add_params(MyMessage.MSG_ARG_KEY_NUM_SAMPLES, local_sample_num)
+
+        message.add_params(MyMessage.MSG_ARG_KEY_MODEL_SCORES, scores)
         self.send_message(message)
 
 
     def __train(self):
         logging.info("#######training########### round_id = %d" % self.round_idx)
-        weights, masks, local_sample_num = self.trainer.train(mode = self.mode, round_idx=self.round_idx, )
+        weights, masks, local_sample_num, scores = self.trainer.train(mode = self.mode, round_idx=self.round_idx, )
         if self.mode in [2, 3]:
-            self.send_model_to_server(0, weights, local_sample_num, masks)
+            self.send_model_to_server(0, weights, local_sample_num, scores, masks)
         else:
-            self.send_model_to_server(0, weights, local_sample_num)
+            self.send_model_to_server(0, weights, local_sample_num, scores)
