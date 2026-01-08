@@ -75,7 +75,25 @@ class FedDSTServerManager(ServerManager):
         sender_id = msg_params.get(MyMessage.MSG_ARG_KEY_SENDER)
         model_params = msg_params.get(MyMessage.MSG_ARG_KEY_MODEL_PARAMS)
         local_sample_number = msg_params.get(MyMessage.MSG_ARG_KEY_NUM_SAMPLES)
+
         prune_scores = msg_params.get(MyMessage.MSG_ARG_KEY_MODEL_SCORES)
+        if prune_scores is not None:
+            if not hasattr(self, "round_scores_sum"):
+                self.round_scores_sum = {}
+                self.round_scores_cnt = {}
+            for kind, layer_scores in prune_scores.items():
+                if kind not in self.round_scores_sum:
+                    self.round_scores_sum[kind] = {}
+                    self.round_scores_cnt[kind] = {}
+                for l, s in layer_scores.items():
+                    s = s.detach().cpu()
+                    if l in self.round_scores_sum[kind]:
+                        self.round_scores_sum[kind][l] += s
+                        self.round_scores_cnt[kind][l] += 1
+                    else:
+                        self.round_scores_sum[kind][l] = s
+                        self.round_scores_cnt[kind][l] = 1
+
         if self.mode in [2, 3]:
             masks = msg_params.get(MyMessage.MSG_ARG_KEY_MODEL_MASKS)
             self.aggregator.add_local_trained_mask(sender_id - 1, masks)
@@ -91,6 +109,12 @@ class FedDSTServerManager(ServerManager):
                 global_mask = self.aggregator.aggregate_mask()
                 # # prune to reach density
                 layer_density_strategy, pruning_strategy = model.strategy.split("_")
+
+                if hasattr(self, "round_scores_sum") and hasattr(self, "round_scores_cnt") and len(self.round_scores_sum) > 0:
+                    prune_scores = {k: {l: self.round_scores_sum[k][l] / self.round_scores_cnt[k][l] for l in self.round_scores_sum[k]} for k in self.round_scores_sum}
+                    self.round_scores_sum = {}
+                    self.round_scores_cnt = {}\
+                
                 new_global_mask = pruning(model, model.layer_density_dict, pruning_strategy, score=prune_scores, mask_dict=global_mask)
                 model.mask_dict = new_global_mask
                 model.to(self.aggregator.device)

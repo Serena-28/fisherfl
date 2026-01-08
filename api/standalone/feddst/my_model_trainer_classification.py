@@ -22,7 +22,7 @@ class MyModelTrainer(ModelTrainer):
         self.model.load_state_dict(model_parameters, strict=False)
 
     def get_model_scores(self):
-        return self.scores
+        return self.model.scores
 
     @staticmethod
     def _attach_hooks(model, store, module_types=(nn.Conv2d, nn.Linear)):
@@ -75,10 +75,10 @@ class MyModelTrainer(ModelTrainer):
             optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, self.model.parameters()), lr=args.lr)
         else:
             optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, self.model.parameters()), lr=args.lr,
-                                         weight_decay=args.wd, amsgrad=True)
-            
+                                        weight_decay=args.wd, amsgrad=True)
+                
         epoch_loss = []
-        
+            
         if mode in [2, 3]:
             local_epochs = args.adjustment_epochs if args.adjustment_epochs is not None else args.epochs
         else:
@@ -90,6 +90,15 @@ class MyModelTrainer(ModelTrainer):
         else:
             first_epochs = local_epochs
 
+        store = {}
+        handles = []
+        score_prune_sum = {}
+        score_grow_sum = {}
+        score_cnt = {}
+        params = dict(model.named_parameters())
+        if mode in [2, 3] and args.growth_data_mode == "score":
+            handles = self._attach_hooks(model, store)
+
         for epoch in range(first_epochs):
             batch_loss = []
             for batch_idx, (x, labels) in enumerate(train_data):
@@ -98,33 +107,57 @@ class MyModelTrainer(ModelTrainer):
                 log_probs = model(x)
                 loss = criterion(log_probs, labels)
                 loss.backward()
+
+                if mode in [2, 3] and args.growth_data_mode == "score":
+                    for l, _ in model.named_modules():
+                        lg = f"{l}.weight"
+                        if l not in store or "a" not in store[l] or "g" not in store[l] or lg not in params or params[lg].grad is None:
+                            continue
+                        a = store[l]['a']
+                        g = store[l]['g']
+                        A = (a.t() @ a) / max(a.shape[0], 1)
+                        G = (g.t() @ g) / max(g.shape[0], 1)
+                        adiag = torch.diagonal(A)
+                        gdiag = torch.diagonal(G)
+                        F_diag = (adiag[:, None] * gdiag[None, :]).t()
+                        eps = 1e-8
+
+                        grad = params[lg].grad.detach().cpu()
+                        w = params[lg].data.detach().cpu()
+                        sp = -grad * w + 0.5 * (w ** 2) * F_diag
+                        sg = 0.5 * (grad ** 2) / (F_diag + eps)
+                        
+                        if l in score_prune_sum:
+                            score_prune_sum[l] += sp
+                            score_grow_sum[l] += sg
+                            score_cnt[l] += 1
+                        else:
+                            score_prune_sum[l] = sp
+                            score_grow_sum[l] = sg
+                            score_cnt[l] = 1
+
                 #self.model.apply_mask_gradients()  # apply pruning mask
-                
+                    
                 # Uncommet this following line to avoid nan loss
                 # torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
 
                 optimizer.step()
-                # logging.info('Update Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
-                #     epoch, (batch_idx + 1) * args.batch_size, len(train_data) * args.batch_size,
-                #            100. * (batch_idx + 1) / len(train_data), loss.item()))
 
                 batch_loss.append(loss.item())
             epoch_loss.append(sum(batch_loss) / len(batch_loss))
             logging.info('Client Index = {}\tEpoch: {}\tLoss: {:.6f}'.format(self.id, epoch, sum(epoch_loss) / len(epoch_loss)))
 
         if mode in [2, 3]:
-            model.zero_grad()
-            store = {}
-            handles = []
-
             if args.growth_data_mode == "score":
-                handles = self._attach_hooks(model, store)
-                gradients = {name: param.grad.detach().clone() for name, param in model.named_parameters() if param.grad is not None}
+                gradients = {name: param.grad.detach().cpu().clone() for name, param in model.named_parameters() if param.grad is not None}
+                model.zero_grad()
             
             elif args.growth_data_mode == "random":
+                model.zero_grad()
                 gradients = {name: torch.randn_like(param, device='cpu').clone() for name, param in model.named_parameters() if param.requires_grad}
 
             elif args.growth_data_mode == "single":
+                model.zero_grad()
                 x, labels = next(iter(train_data))
                 x, labels = x[0].unsqueeze(0).repeat(2, 1, 1, 1).to(device), labels[0].unsqueeze(0).repeat(2).to(device)  # Duplicate the sample to create a pseudo-batch
                 log_probs = model(x)
@@ -133,6 +166,7 @@ class MyModelTrainer(ModelTrainer):
                 gradients = {name: param.grad.data.cpu().clone() for name, param in model.named_parameters() if param.requires_grad}
                 model.zero_grad()
             else:
+                model.zero_grad()
                 for batch_idx, (x, labels) in enumerate(train_data):
                     x, labels = x.to(device), labels.to(device)
                     log_probs = model(x)
@@ -148,49 +182,23 @@ class MyModelTrainer(ModelTrainer):
 
             score_prune = {}
             score_grow = {}
-            weights = {n: p.detach().cpu().clone() for n, p in model.named_parameters() if p.requires_grad}
-
-            for l, _ in model.named_modules():
-                lg = f"{l}.weight"
-                if l not in store or "a" not in store[l] or "g" not in store[l] or lg not in gradients or lg not in weights:
-                    continue
-
-                a = store[l]['a']
-                g = store[l]['g'] # 对 pre-activation 的反向梯度
-                A = (a.t() @ a) / max(a.shape[0], 1)
-                G = (g.t() @ g) / max(g.shape[0], 1)
-
-                adiag = torch.diagonal(A)
-                gdiag = torch.diagonal(G)
-                F_diag = (adiag[:, None] * gdiag[None, :]).t()
-
-                eps = 1e-8
-                score_prune[l] = -gradients[lg] * weights[lg] + 0.5 * (weights[lg] ** 2) * F_diag
-                score_grow[l] = 0.5 * (gradients[lg] ** 2) / (F_diag + eps)
+            if args.growth_data_mode == "score":
+                score_prune = {l: score_prune_sum[l] / max(score_cnt[l], 1) for l in score_prune_sum}
+                score_grow = {l: score_grow_sum[l] / max(score_cnt[l], 1) for l in score_grow_sum}
 
             # pruning and growing 第五步
-            self.scores = {"prune": score_prune, "grow": score_grow}
+            self.model.scores = {"prune": score_prune, "grow": score_grow}
+            # sp = model.scores["prune"]["layer"]
+            # sg = model.scores["grow"]["layer"]
+
             if args.growth_data_mode == "score":
-                model.adjust_mask_dict(gradients, t=round_idx, T_end=args.T_end, alpha=args.adjust_alpha, score=self.scores)
+                model.adjust_mask_dict(gradients, t=round_idx, T_end=args.T_end, alpha=args.adjust_alpha, score=self.model.scores)
             else:
                 model.adjust_mask_dict(gradients, t=round_idx, T_end=args.T_end, alpha=args.adjust_alpha, score=None)
             model.apply_mask()
 
-        # 第六步
-        # for epoch in range(first_epochs, local_epochs):
-        #     batch_loss = []
-        #     for batch_idx, (x, labels) in enumerate(train_data):
-        #         x, labels = x.to(device), labels.to(device)
-        #         model.zero_grad()
-        #         log_probs = model(x)
-        #         loss = criterion(log_probs, labels)
-        #         loss.backward()
-        #         optimizer.step()
-        #         batch_loss.append(loss.item())
-        #     epoch_loss.append(sum(batch_loss) / len(batch_loss))
-        #     logging.info('Client Index = {}\tEpoch: {}\tLoss: {:.6f}'.format(self.id, epoch, sum(epoch_loss) / len(epoch_loss)))
-
         return model.mask_dict
+
 
     def test(self, test_data, device, args):
         model = self.model

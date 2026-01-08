@@ -23,6 +23,7 @@ class MyMessage(object):
     MSG_ARG_KEY_MODEL_MASKS = "masks"
     # MSG_ARG_KEY_MODEL_GRADIENT = "gradient"
     MSG_ARG_KEY_CLIENT_INDEX = "client_idx"
+    MSG_ARG_KEY_MODEL_SCORES = "scores"
 
     MSG_ARG_KEY_MODE_CODE = "mode_code"
     MSG_ARG_KEY_ROUND_IDX = "round_idx" 

@@ -41,7 +41,7 @@ def generate_layer_density_dict(layer_shape_dict, num_overall_elements, sparse_l
     return layer_density_dict
 
 
-def pruning(model, layer_density_dict, pruning_strategy, score, mask_dict=None):
+def pruning(model, layer_density_dict, pruning_strategy, score=None, mask_dict=None):
     if mask_dict is None:
         mask_dict = {}
 
@@ -51,6 +51,7 @@ def pruning(model, layer_density_dict, pruning_strategy, score, mask_dict=None):
         if name in layer_density_dict:
             density = layer_density_dict[name]
             num_elements = weight.numel() # the total number for elements
+            score = model.scores
 
             if name not in mask_dict:
                 old_mask = torch.ones_like(
@@ -60,7 +61,10 @@ def pruning(model, layer_density_dict, pruning_strategy, score, mask_dict=None):
                 old_mask = mask_dict[name]
 
             if pruning_strategy in ["score"]:
-                new_mask_dict[name] = score_prune(score, old_mask, num_elements, density)
+                if score is None: 
+                    new_mask_dict[name] = random_prune(weight, old_mask, num_elements, density)
+                else:
+                    new_mask_dict[name] = score_prune(score["prune"], old_mask, num_elements, density) # TODO score 名字修改使得更明确意思
             elif pruning_strategy in ["mag", "magnitude"]:
                 # 传入可选的 per-layer fisher
                 F = fisher_dict.get(name) if (fisher_dict is not None and name in fisher_dict) else None
@@ -111,7 +115,7 @@ def magnitude_prune(weight, old_mask, num_elements, density):
     new_mask.view(-1)[idx[:num_remain]] = 1.0
     return new_mask
 
-def random_prune(old_mask, num_elements, density):
+def random_prune(weight, old_mask, num_elements, density):
     weight = weight * old_mask
     num_remain = int(num_elements * density)
     current_num_element = old_mask.sum()
