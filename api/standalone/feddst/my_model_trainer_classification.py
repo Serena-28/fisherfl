@@ -28,36 +28,40 @@ class MyModelTrainer(ModelTrainer):
     def _attach_hooks(model, store, module_types=(nn.Conv2d, nn.Linear)):
         handles = []
         for name, module in model.named_modules():
-            if isinstance(module, module_types):
-                def fwd_hook(mod, inp, out, name=name):
-                    x = inp[0]
-                    if not torch.is_tensor(x):
-                        return
-                    x = x.detach()
-                    if isinstance(mod, nn.Conv2d):
-                        patches = F.unfold(x, kernel_size=mod.kernel_size, dilation=mod.dilation, padding=mod.padding, stride=mod.stride)
-                        a = patches.transpose(1, 2).reshape(-1, patches.shape[1])
-                    else:
-                        a = x.reshape(-1, x.shape[-1])
-                    store.setdefault(name, {})["a"] = a.cpu()
+            if not isinstance(module, module_types):
+                continue
 
-                def bwd_hook(mod, grad_input, grad_output, name=name):
-                    go = grad_output[0]
-                    if not torch.is_tensor(go):
-                        return
-                    go = go.detach()
+            def fwd_hook(mod, inp, out, name=name):
+                x = inp[0]
+                if not torch.is_tensor(x):
+                    return
+                x = x.detach()
+
+                if isinstance(mod, nn.Conv2d):
+                    patches = F.unfold(x, kernel_size=mod.kernel_size, dilation=mod.dilation, padding=mod.padding, stride=mod.stride)
+                    a = patches.transpose(1, 2).reshape(-1, patches.shape[1])
+                else:
+                    a = x.reshape(-1, x.shape[-1])
+
+                store.setdefault(name, {})["a"] = a.cpu()
+
+                if not torch.is_tensor(out):
+                    return
+
+                def out_grad_hook(grad, name=name, mod=mod):
+                    go = grad.detach()
                     if isinstance(mod, nn.Conv2d):
                         g = go.permute(0, 2, 3, 1).reshape(-1, go.shape[1])
                     else:
                         g = go.reshape(-1, go.shape[-1])
                     store.setdefault(name, {})["g"] = g.cpu()
 
-                handles.append(module.register_forward_hook(fwd_hook))
-                if hasattr(module, "register_full_backward_hook"):
-                    handles.append(module.register_full_backward_hook(bwd_hook))
-                else:
-                    handles.append(module.register_backward_hook(bwd_hook))
+                out.register_hook(out_grad_hook)
+
+            handles.append(module.register_forward_hook(fwd_hook))
+
         return handles
+
 
     def train(self, train_data, device, args, mode, round_idx = None):
 
@@ -86,6 +90,7 @@ class MyModelTrainer(ModelTrainer):
 
         if mode in [2, 3]:
             A_epochs = local_epochs // 2 if args.A_epochs is None else args.A_epochs
+            A_epochs = max(1, A_epochs) # 预防 first_epochs 设为零
             first_epochs = min(local_epochs, A_epochs)
         else:
             first_epochs = local_epochs
@@ -96,6 +101,7 @@ class MyModelTrainer(ModelTrainer):
         score_grow_sum = {}
         score_cnt = {}
         params = dict(model.named_parameters())
+        
         if mode in [2, 3] and args.growth_data_mode == "score":
             handles = self._attach_hooks(model, store)
 
@@ -110,7 +116,10 @@ class MyModelTrainer(ModelTrainer):
 
                 if mode in [2, 3] and args.growth_data_mode == "score":
                     for l, _ in model.named_modules():
-                        lg = f"{l}.weight"
+                        lg = f"{l[6:] if l.startswith('model.') else l}.weight" # params 需要的格式
+                        # Names of l ['', 'model', 'model.conv1']
+                        # Store object indexed as such store = {model.layer: {'a': tensor, 'g': tensor}}
+                        # print(list(params.keys())[:50])
                         if l not in store or "a" not in store[l] or "g" not in store[l] or lg not in params or params[lg].grad is None:
                             continue
                         a = store[l]['a']
@@ -122,10 +131,19 @@ class MyModelTrainer(ModelTrainer):
                         F_diag = (adiag[:, None] * gdiag[None, :]).t()
                         eps = 1e-8
 
-                        grad = params[lg].grad.detach().cpu()
+                        grad = params[lg].grad.detach().cpu() # dW
                         w = params[lg].data.detach().cpu()
-                        sp = -grad * w + 0.5 * (w ** 2) * F_diag
-                        sg = 0.5 * (grad ** 2) / (F_diag + eps)
+                        
+                        w2 = w.view(w.size(0), -1)
+                        g2 = grad.view(grad.size(0), -1)
+
+                        sp2 = -g2 * w2 + 0.5 * (w2 ** 2) * F_diag
+                        sg2 = 0.5 * (g2 ** 2) / (F_diag + eps)
+
+                        sp = sp2.view_as(w)
+                        sg = sg2.view_as(w)
+                        # sp = -grad * w + 0.5 * (w ** 2) * F_diag
+                        # sg = 0.5 * (grad ** 2) / (F_diag + eps)
                         
                         if l in score_prune_sum:
                             score_prune_sum[l] += sp
@@ -149,12 +167,12 @@ class MyModelTrainer(ModelTrainer):
 
         if mode in [2, 3]:
             if args.growth_data_mode == "score":
-                gradients = {name: param.grad.detach().cpu().clone() for name, param in model.named_parameters() if param.grad is not None}
+                gradients = {name: param.grad.detach().clone() for name, param in model.named_parameters() if param.grad is not None}
                 model.zero_grad()
             
             elif args.growth_data_mode == "random":
                 model.zero_grad()
-                gradients = {name: torch.randn_like(param, device='cpu').clone() for name, param in model.named_parameters() if param.requires_grad}
+                gradients = {name: torch.randn_like(param, device=device).clone() for name, param in model.named_parameters() if param.requires_grad}
 
             elif args.growth_data_mode == "single":
                 model.zero_grad()
@@ -163,7 +181,7 @@ class MyModelTrainer(ModelTrainer):
                 log_probs = model(x)
                 loss = criterion(log_probs, labels)
                 loss.backward()
-                gradients = {name: param.grad.data.cpu().clone() for name, param in model.named_parameters() if param.requires_grad}
+                gradients = {name: param.grad.detach().clone() for name, param in model.named_parameters() if param.requires_grad and param.grad is not None}
                 model.zero_grad()
             else:
                 model.zero_grad()
@@ -174,7 +192,7 @@ class MyModelTrainer(ModelTrainer):
                     loss.backward()
                     if args.growth_data_mode == "batch":
                         break
-                gradients = {name: param.grad.data.cpu().clone() for name, param in model.named_parameters() if param.requires_grad}
+                gradients = {name: param.grad.detach().clone() for name, param in model.named_parameters() if param.requires_grad and param.grad is not None}
                 model.zero_grad()
 
             for h in handles:
@@ -188,16 +206,17 @@ class MyModelTrainer(ModelTrainer):
 
             # pruning and growing 第五步
             self.model.scores = {"prune": score_prune, "grow": score_grow}
-            # sp = model.scores["prune"]["layer"]
-            # sg = model.scores["grow"]["layer"]
 
             if args.growth_data_mode == "score":
-                model.adjust_mask_dict(gradients, t=round_idx, T_end=args.T_end, alpha=args.adjust_alpha, score=self.model.scores)
+                model.adjust_mask_dict(gradients, t=round_idx, T_end=args.T_end, alpha=args.adjust_alpha, scores=self.model.scores)
             else:
-                model.adjust_mask_dict(gradients, t=round_idx, T_end=args.T_end, alpha=args.adjust_alpha, score=None)
+                model.adjust_mask_dict(gradients, t=round_idx, T_end=args.T_end, alpha=args.adjust_alpha, scores=None)
             model.apply_mask()
-
+            # model.mask_dict = {k: v.detach().cpu() for k, v in model.mask_dict.items()}
+            
+        logging.info(f"Model trainer finish training, score, adjust mask")
         return model.mask_dict
+
 
 
     def test(self, test_data, device, args):

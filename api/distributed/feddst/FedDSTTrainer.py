@@ -33,11 +33,13 @@ class FedDSTTrainer(object):
         weights = self.trainer.get_model_params()
         scores = self.trainer.get_model_scores()
 
+        prune_score = scores["prune"] if scores is not None else None
+
         # transform Tensor to list
         if self.args.is_mobile == 1:
             weights = transform_tensor_to_list(weights)
 
-        return weights, masks, self.local_sample_number, scores["prune"]
+        return weights, masks, self.local_sample_number, prune_score
 
     # def test(self):
     #     # train data

@@ -26,6 +26,8 @@ class SparseModel(nn.Module):
         self.ignore_layers = ignore_layers
         self.device = device
 
+        self.scores = None
+
 
         # layer_set includes all layer names
         # layer_shape_dict includes the shape of every layer
@@ -149,7 +151,7 @@ class SparseModel(nn.Module):
                 try:
                     weight.data = weight.data * self.mask_dict[name]
                 except RuntimeError:
-                    raise RuntimeError(f"the device for weight is {weight.device} and mask_dict is on {self.mask_dict[name].device}") 
+                    raise RuntimeError(f"the device for weight is {weight.device} and mask_dict of {__name__} is on {self.mask_dict[name].device}") 
                 
     @torch.no_grad()
     def apply_mask_gradients(self):
@@ -180,6 +182,7 @@ class SparseModel(nn.Module):
     
     def adjust_mask_dict(self, gradients, t, T_end, alpha, scores=None):
         self.mask_dict = sparse_update_step(self.model, gradients, self.mask_dict, t, T_end, alpha, scores)
+
 
     def prune_and_grow_fedsgc(self, weights, masks, gradient_dict, local_direction_map, t, alpha, T_end, lambda_k, beta_k, global_direction_map):
         if global_direction_map is None:
