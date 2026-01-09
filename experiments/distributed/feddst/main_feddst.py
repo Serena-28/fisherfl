@@ -154,7 +154,7 @@ def load_data(args, dataset_name):
 
     if dataset_name == "tinystories":
         pass
-        dataset_tuple = load_partition_data_tinystories(args.partition_method, args.partition_alpha, args.client_num_in_total, args.batch_size,  args.dataset_ratio)
+        dataset_tuple = load_partition_data_tinystories(args.partition_method, args.partition_alpha, args.client_num_in_total, args.batch_size, args.dataset_ratio)
     else:
         if dataset_name == "cifar10":
             data_loader = load_partition_data_cifar10

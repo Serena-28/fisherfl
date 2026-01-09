@@ -117,8 +117,7 @@ class MyModelTrainer(ModelTrainer):
                 if mode in [2, 3] and args.growth_data_mode == "score":
                     for l, _ in model.named_modules():
                         lg = f"{l[6:] if l.startswith('model.') else l}.weight" # params 需要的格式
-                        # Names of l ['', 'model', 'model.conv1']
-                        # Store object indexed as such store = {model.layer: {'a': tensor, 'g': tensor}}
+                        # store = {model.layer: {'a': tensor, 'g': tensor}}
                         # print(list(params.keys())[:50])
                         if l not in store or "a" not in store[l] or "g" not in store[l] or lg not in params or params[lg].grad is None:
                             continue
@@ -128,6 +127,30 @@ class MyModelTrainer(ModelTrainer):
                         G = (g.t() @ g) / max(g.shape[0], 1)
                         adiag = torch.diagonal(A)
                         gdiag = torch.diagonal(G)
+
+                        expected_out = params[lg].data.size(0)
+                        expected_in = params[lg].data.view(expected_out, -1).size(1)
+
+                        if gdiag.numel() != expected_out:
+                            if gdiag.numel() > expected_out:
+                                if gdiag.numel() % expected_out == 0:
+                                    gdiag = gdiag.reshape(expected_out, -1).mean(dim=1)
+                                else:
+                                    gdiag = gdiag[:expected_out]
+                            else:
+                                reps = (expected_out + gdiag.numel() - 1) // gdiag.numel()
+                                gdiag = gdiag.repeat(reps)[:expected_out]
+
+                        if adiag.numel() != expected_in:
+                            if adiag.numel() > expected_in:
+                                if adiag.numel() % expected_in == 0:
+                                    adiag = adiag.reshape(expected_in, -1).mean(dim=1)
+                                else:
+                                    adiag = adiag[:expected_in]
+                            else:
+                                reps = (expected_in + adiag.numel() - 1) // adiag.numel()
+                                adiag = adiag.repeat(reps)[:expected_in]
+
                         F_diag = (adiag[:, None] * gdiag[None, :]).t()
                         eps = 1e-8
 
@@ -212,7 +235,6 @@ class MyModelTrainer(ModelTrainer):
             else:
                 model.adjust_mask_dict(gradients, t=round_idx, T_end=args.T_end, alpha=args.adjust_alpha, scores=None)
             model.apply_mask()
-            # model.mask_dict = {k: v.detach().cpu() for k, v in model.mask_dict.items()}
             
         logging.info(f"Model trainer finish training, score, adjust mask")
         return model.mask_dict
