@@ -9,6 +9,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 sh run_feddst_distributed_pytorch.sh resnet18 cifar
 CUDA_VISIBLE_DEVICES=0,1,2,3 sh run_feddst_distributed_pytorch.sh resnet18 cifar10 100 10 500 1 0.1 0.1 --delta_T 10 --T_end 300 --num_eval 128 --frequency_of_the_test 10 
 # --A_epochs None --adjustment_epochs None --growth_data_mode batch --client_optimizer sgd
 ```
+CUDA_VISIBLE_DEVICES=0,1 sh run_feddst_distributed_pytorch.sh resnet18 cifar10 10 1 500 1 0.1 0.1 --delta_T 10 --T_end 300 --num_eval 128 --frequency_of_the_test 10
 
 ### NLP task
 ```

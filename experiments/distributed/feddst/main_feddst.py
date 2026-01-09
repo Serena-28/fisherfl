@@ -87,7 +87,7 @@ def add_args(parser):
 
     parser.add_argument("--frequency_of_the_test", type=int, default=5, help="the frequency of the algorithms")
 
-    parser.add_argument('--pruning_strategy', type=str, default="ERK_magnitude",
+    parser.add_argument('--pruning_strategy', type=str, default="ERK_score",
         help='the distribution of layerwise density and the pruning method, options["uniform_magnitude", "ER_magnitude", "ERK_magnitude"]')
 
     parser.add_argument('--target_density', type=float, default=0.5,
@@ -139,7 +139,8 @@ def add_args(parser):
 
     parser.add_argument("--client_optimizer", type=str, default="sgd", help="SGD with momentum; adam")
 
-    parser.add_argument("--growth_data_mode", type=str, default="batch", help=" the number of data samples used for parameter growth, option are [ 'random', 'single', 'batch', 'entire']" )
+    # parser.add_argument("--growth_data_mode", type=str, default="batch", help=" the number of data samples used for parameter growth, option are [ 'random', 'single', 'batch', 'entire']" )
+    parser.add_argument("--growth_data_mode", type=str, default="score", help=" the number of data samples used for parameter growth, option are [ 'random', 'single', 'batch', 'entire']" )
 
     args = parser.parse_args()  
     return args
