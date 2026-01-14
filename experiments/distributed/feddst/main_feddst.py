@@ -257,6 +257,7 @@ if __name__ == "__main__":
             + args.dataset 
             + "_"
             + args.model 
+            + "_divide N (correct batch sz)" # Renaming
             ,
             config=args,
         )

@@ -121,10 +121,17 @@ class MyModelTrainer(ModelTrainer):
                         # print(list(params.keys())[:50])
                         if l not in store or "a" not in store[l] or "g" not in store[l] or lg not in params or params[lg].grad is None:
                             continue
+
+                        grad = params[lg].grad.detach().cpu()
+                        w = params[lg].data.detach().cpu()
+                        eps = 1e-8
+
                         a = store[l]['a']
                         g = store[l]['g']
-                        A = (a.t() @ a) / max(a.shape[0], 1)
-                        G = (g.t() @ g) / max(g.shape[0], 1)
+
+                        A = (a.t() @ a) * max(a.shape[0], 1)
+                        G = (g.t() @ g) * max(g.shape[0], 1)
+
                         adiag = torch.diagonal(A)
                         gdiag = torch.diagonal(G)
 
@@ -152,10 +159,6 @@ class MyModelTrainer(ModelTrainer):
                                 adiag = adiag.repeat(reps)[:expected_in]
 
                         F_diag = (adiag[:, None] * gdiag[None, :]).t()
-                        eps = 1e-8
-
-                        grad = params[lg].grad.detach().cpu() # dW
-                        w = params[lg].data.detach().cpu()
                         
                         w2 = w.view(w.size(0), -1)
                         g2 = grad.view(grad.size(0), -1)
@@ -165,8 +168,6 @@ class MyModelTrainer(ModelTrainer):
 
                         sp = sp2.view_as(w)
                         sg = sg2.view_as(w)
-                        # sp = -grad * w + 0.5 * (w ** 2) * F_diag
-                        # sg = 0.5 * (grad ** 2) / (F_diag + eps)
                         
                         if l in score_prune_sum:
                             score_prune_sum[l] += sp
@@ -236,6 +237,20 @@ class MyModelTrainer(ModelTrainer):
                 model.adjust_mask_dict(gradients, t=round_idx, T_end=args.T_end, alpha=args.adjust_alpha, scores=None)
             model.apply_mask()
             
+        logging.info("FURTHER TRAINING MODEL CLASSIFICATION")
+        for epoch in range(first_epochs, local_epochs):
+            batch_loss = []
+            for batch_idx, (x, labels) in enumerate(train_data):
+                x, labels = x.to(device), labels.to(device)
+                model.zero_grad()
+                log_probs = model(x)
+                loss = criterion(log_probs, labels)
+                loss.backward()
+                optimizer.step()
+                batch_loss.append(loss.item())
+            epoch_loss.append(sum(batch_loss) / len(batch_loss))
+            logging.info('Client Index = {}\tEpoch: {}\tLoss: {:.6f}'.format(self.id, epoch, sum(epoch_loss) / len(epoch_loss)))
+
         logging.info(f"Model trainer finish training, score, adjust mask")
         return model.mask_dict
 

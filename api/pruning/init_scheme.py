@@ -41,7 +41,7 @@ def generate_layer_density_dict(layer_shape_dict, num_overall_elements, sparse_l
     return layer_density_dict
 
 
-def pruning(model, layer_density_dict, pruning_strategy, score=None, mask_dict=None):
+def pruning(model, layer_density_dict, pruning_strategy, prune_scores=None, mask_dict=None):
     if mask_dict is None:
         mask_dict = {}
 
@@ -52,18 +52,20 @@ def pruning(model, layer_density_dict, pruning_strategy, score=None, mask_dict=N
             density = layer_density_dict[name]
             num_elements = weight.numel()
 
-            if score is None and hasattr(model, "scores"):
-                score = model.scores
-
             if name not in mask_dict:
                 old_mask = torch.ones_like(weight, dtype=weight.data.dtype, requires_grad=False)
             else:
                 old_mask = mask_dict[name]
 
             if pruning_strategy in ["score"]:
-                layer_scores = score["prune"] if (score is not None and "prune" in score) else None
-                key = name if (layer_scores is not None and name in layer_scores) else name.rsplit(".", 1)[0]
-                new_mask_dict[name] = old_mask if (layer_scores is None or key not in layer_scores) else score_prune(layer_scores[key], old_mask, num_elements, density)
+                key = "model." + name.removesuffix(".weight")
+                if prune_scores is not None and key in prune_scores:
+                    logging.info(f"ENTER SCORE PRUNE WITH KEY {key}")
+                    
+                    new_mask_dict[name] = score_prune(prune_scores[key], old_mask, num_elements, density)
+                else:
+                    # new_mask_dict[name] = old_mask
+                    new_mask_dict[name] = random_prune(weight, old_mask, num_elements, density)
 
             elif pruning_strategy in ["mag", "magnitude"]:
                 new_mask_dict[name] = magnitude_prune(weight, old_mask, num_elements, density)
@@ -332,4 +334,3 @@ def get_erdos_renyi_dist(layer_shape_dict, sparse_layer_set, target_density, is_
         prob_dict[name] = prob
 
     return prob_dict
-

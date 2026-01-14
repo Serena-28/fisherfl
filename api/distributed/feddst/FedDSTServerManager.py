@@ -76,59 +76,55 @@ class FedDSTServerManager(ServerManager):
         model_params = msg_params.get(MyMessage.MSG_ARG_KEY_MODEL_PARAMS)
         local_sample_number = msg_params.get(MyMessage.MSG_ARG_KEY_NUM_SAMPLES)
 
-        prune_scores = msg_params.get(MyMessage.MSG_ARG_KEY_MODEL_SCORES)
+        prune_scores = msg_params.get(MyMessage.MSG_ARG_KEY_MODEL_SCORES) 
         if prune_scores is not None:
-            if not hasattr(self, "round_scores_sum"):
-                self.round_scores_sum = {}
-                self.round_scores_cnt = {}
-            for kind, layer_scores in {"prune": prune_scores}.items():
-                if kind not in self.round_scores_sum:
-                    self.round_scores_sum[kind] = {}
-                    self.round_scores_cnt[kind] = {}
-                for l, s in layer_scores.items():
-                    s = s.detach().cpu()
-                    if l in self.round_scores_sum[kind]:
-                        self.round_scores_sum[kind][l] += s
-                        self.round_scores_cnt[kind][l] += 1
-                    else:
-                        self.round_scores_sum[kind][l] = s
-                        self.round_scores_cnt[kind][l] = 1
+            self.aggregator.add_local_trained_scores(sender_id - 1, prune_scores)
 
         if self.mode in [2, 3]:
             masks = msg_params.get(MyMessage.MSG_ARG_KEY_MODEL_MASKS)
             self.aggregator.add_local_trained_mask(sender_id - 1, masks)
-
+            
         self.aggregator.add_local_trained_result(sender_id - 1, model_params, local_sample_number)
         b_all_received = self.aggregator.check_whether_all_receive()
         logging.info("b_all_received = " + str(b_all_received))
+
         if b_all_received:
             global_model_params = self.aggregator.aggregate()
             logging.info(f"current mode for server is {self.mode}, the round is {self.round_idx}")
             if self.mode in [2, 3]:
                 model = self.aggregator.trainer.model
-                model.to(self.aggregator.device)
                 global_mask = self.aggregator.aggregate_mask()
-                for k in global_mask:
-                    global_mask[k] = global_mask[k].to(self.aggregator.device)
+
+                global_scores = self.aggregator.aggregate_scores()
+                logging.info(f"GLOBAL SCORES AGGREGATE: {global_scores.keys()}")
+
                 # # prune to reach density
                 layer_density_strategy, pruning_strategy = model.strategy.split("_")
 
-                if hasattr(self, "round_scores_sum") and hasattr(self, "round_scores_cnt") and len(self.round_scores_sum) > 0:
-                    prune_scores = {k: {l: self.round_scores_sum[k][l] / self.round_scores_cnt[k][l] for l in self.round_scores_sum[k]} for k in self.round_scores_sum}
-                    self.round_scores_sum = {}
-                    self.round_scores_cnt = {}
+                new_global_mask = pruning(model, model.layer_density_dict, pruning_strategy, prune_scores=global_scores, mask_dict=global_mask)
+                # print sparsity after pruning (very simple)
+                try:
+                    tot, nz = 0, 0
+                    for m in new_global_mask.values():
+                        m = m.detach()
+                        tot += m.numel()
+                        nz += (m != 0).sum().item()
+                    if tot > 0:
+                        logging.info(f"[server] sparsity(after prune)={1 - nz / tot:.6f}, density={nz / tot:.6f}")
+                except Exception as e:
+                    logging.info(f"[server] sparsity log failed: {e}")
 
-                new_global_mask = pruning(model, model.layer_density_dict, pruning_strategy, score=prune_scores, mask_dict=global_mask)
                 model.mask_dict = new_global_mask
                 model.to(self.aggregator.device)
                 model.apply_mask()
-
+                
+            # logging.info("mask_dict after pruning and growing = " +str(mask_dict))
             self.aggregator.test_on_server_for_all_clients(self.round_idx)
-
+            
             # start the next round
             self.round_idx += 1
 
-            # convert the mode
+            # convert the mode 
             self.mode = self.mode_convert()
 
             if self.round_idx == self.round_num + 1:
@@ -152,7 +148,7 @@ class FedDSTServerManager(ServerManager):
             logging.info(f"current step is {self.round_idx} and the current mode is {self.mode}")
             if self.args.is_mobile == 1:
                 global_model_params = transform_tensor_to_list(global_model_params)
-
+            
             if self.mode in [0, 3]:
                 mask_dict = self.aggregator.trainer.model.mask_dict
                 for k in mask_dict:
@@ -164,6 +160,7 @@ class FedDSTServerManager(ServerManager):
                 for receiver_id in range(1, self.size):
                     self.send_message_sync_model_to_client(receiver_id, global_model_params,
                         client_indexes[receiver_id - 1], self.mode, self.round_idx)
+
 
 
 

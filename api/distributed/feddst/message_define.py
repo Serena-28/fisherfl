@@ -36,4 +36,3 @@ class MyMessage(object):
     # MSG_ARG_KEY_TEST_ERROR = "test_error"
     # MSG_ARG_KEY_TEST_NUM = "test_num_sample"
 
-

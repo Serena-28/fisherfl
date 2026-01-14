@@ -30,6 +30,9 @@ class FedDSTAggregator(object):
         self.device = device
         self.model_dict = dict()
         self.mask_dict = dict()
+
+        self.scores_dict = dict()
+
         self.sample_num_dict = dict()
         self.flag_client_model_uploaded_dict = dict()
         for idx in range(self.worker_num):
@@ -161,3 +164,35 @@ class FedDSTAggregator(object):
                 if key != "test_total":
                     wandb.log({f"Test/{key}": metrics[key], "round": round_idx})
             logging.info(metrics)
+
+    def add_local_trained_scores(self, index, scores):
+        logging.info("ADD SCORES AGGREGATOR. index = %d" % index)
+        self.scores_dict[index] = scores
+        self.flag_client_model_uploaded_dict[index] = True
+
+    def aggregate_scores(self):
+        aggr_scores = {}
+        score_cnt = {}
+
+        for idx in range(self.worker_num):
+            if idx not in self.scores_dict:
+                continue
+            s = self.scores_dict[idx]
+            if s is None:
+                continue
+
+            for k, v in s.items():
+                if v is None:
+                    continue
+                v = v.to(self.device)
+                if k in aggr_scores:
+                    aggr_scores[k] += v
+                    score_cnt[k] += 1
+                else:
+                    aggr_scores[k] = v.clone()
+                    score_cnt[k] = 1
+
+        for k in aggr_scores:
+            aggr_scores[k] = aggr_scores[k] / max(score_cnt[k], 1)
+
+        return aggr_scores
