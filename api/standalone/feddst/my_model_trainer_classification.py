@@ -2,6 +2,7 @@ import logging
 
 import torch
 from torch import nn
+import math
 import torch.nn.functional as F
 from ...pruning.init_scheme import f_decay
 
@@ -63,6 +64,7 @@ class MyModelTrainer(ModelTrainer):
         return handles
 
 
+
     def train(self, train_data, device, args, mode, round_idx = None):
 
         # mode 0 :  training with mask 
@@ -87,6 +89,15 @@ class MyModelTrainer(ModelTrainer):
             local_epochs = args.adjustment_epochs if args.adjustment_epochs is not None else args.epochs
         else:
             local_epochs = args.epochs
+
+        if round_idx is not None:
+            # min_lr = getattr(args, "min_lr", 0.0)
+            min_lr = 0.0
+            total_rounds = args.comm_round
+            cos_decay = 0.5 * (1 + math.cos(math.pi * round_idx / total_rounds))
+            lr = min_lr + (args.lr - min_lr) * cos_decay
+            for g in optimizer.param_groups:
+                g["lr"] = lr
 
         if mode in [2, 3]:
             A_epochs = local_epochs // 2 if args.A_epochs is None else args.A_epochs
@@ -129,8 +140,11 @@ class MyModelTrainer(ModelTrainer):
                         a = store[l]['a']
                         g = store[l]['g']
 
-                        A = (a.t() @ a) * max(a.shape[0], 1)
-                        G = (g.t() @ g) * max(g.shape[0], 1)
+                        ScaleA = max(a.size(0), 1)
+                        ScaleG = max(g.size(0), 1)
+
+                        A = (a.t() @ a) * ScaleA
+                        G = (g.t() @ g) * ScaleG
 
                         adiag = torch.diagonal(A)
                         gdiag = torch.diagonal(G)
@@ -178,10 +192,11 @@ class MyModelTrainer(ModelTrainer):
                             score_grow_sum[l] = sg
                             score_cnt[l] = 1
 
-                #self.model.apply_mask_gradients()  # apply pruning mask
+                # self.model.apply_mask_gradients()  # apply pruning mask
                     
                 # Uncommet this following line to avoid nan loss
-                # torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                with torch.no_grad():
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0, foreach=False)
 
                 optimizer.step()
 
@@ -228,7 +243,6 @@ class MyModelTrainer(ModelTrainer):
                 score_prune = {l: score_prune_sum[l] / max(score_cnt[l], 1) for l in score_prune_sum}
                 score_grow = {l: score_grow_sum[l] / max(score_cnt[l], 1) for l in score_grow_sum}
 
-            # pruning and growing 第五步
             self.model.scores = {"prune": score_prune, "grow": score_grow}
 
             if args.growth_data_mode == "score":
@@ -236,8 +250,16 @@ class MyModelTrainer(ModelTrainer):
             else:
                 model.adjust_mask_dict(gradients, t=round_idx, T_end=args.T_end, alpha=args.adjust_alpha, scores=None)
             model.apply_mask()
+
+            # bn_calib_batches = getattr(args, "bn_calib_batches", 10)
+            # model.train()
+            # with torch.no_grad():
+            #     for i, (x_cal, _) in enumerate(train_data):
+            #         if i >= bn_calib_batches:
+            #             break
+            #         x_cal = x_cal.to(device, non_blocking=True)
+            #         _ = model(x_cal)
             
-        logging.info("FURTHER TRAINING MODEL CLASSIFICATION")
         for epoch in range(first_epochs, local_epochs):
             batch_loss = []
             for batch_idx, (x, labels) in enumerate(train_data):

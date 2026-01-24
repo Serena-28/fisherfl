@@ -2,16 +2,16 @@
 ## Quick Start
 ```
 # general test 
-CUDA_VISIBLE_DEVICES=0,1,2,3 sh run_feddst_distributed_pytorch.sh resnet18 cifar10 100 10 500 5 0.3 0.001 --delta_T 10 --T_end 300 --num_eval 128 --frequency_of_the_test 10 --client_optimizer adam
+CUDA_VISIBLE_DEVICES=4,5,6,7 sh run_feddst_distributed_pytorch.sh shufflenet svhn 100 10 500 5 0.1 0.001 --delta_T 10 --T_end 300 --num_eval 128 --frequency_of_the_test 10 --client_optimizer adam
 # --A_epochs None --adjustment_epochs None --growth_data_mode batch --client_optimizer adam
 
-CUDA_VISIBLE_DEVICES=0,1,2,3 sh run_feddst_distributed_pytorch.sh resnet18 cifar10 100 10 500 5 0.1 0.001 --delta_T 10 --T_end 300 --num_eval 128 --frequency_of_the_test 10 --client_optimizer adam
-
+CUDA_VISIBLE_DEVICES=0,1,2,3 sh run_feddst_distributed_pytorch.sh resnet18 cifar10 100 10 500 5 0.3 0.001 --delta_T 10 --T_end 300 --num_eval 128 --frequency_of_the_test 10 --client_optimizer adam
+d
 # quick test 
 CUDA_VISIBLE_DEVICES=0,1,2,3 sh run_feddst_distributed_pytorch.sh resnet18 cifar10 100 10 500 1 0.1 0.1 --delta_T 10 --T_end 300 --num_eval 128 --frequency_of_the_test 10 
 # --A_epochs None --adjustment_epochs None --growth_data_mode batch --client_optimizer sgd
 ```
-CUDA_VISIBLE_DEVICES=0,1 sh run_feddst_distributed_pytorch.sh resnet18 cifar10 10 1 500 1 0.3 0.01 --delta_T 10 --T_end 300 --num_eval 128 --frequency_of_the_test 10
+CUDA_VISIBLE_DEVICES=0,1 sh run_feddst_distributed_pytorch.sh shufflenet cifar10 10 1 500 1 0.3 0.01 --delta_T 10 --T_end 300 --num_eval 128 --frequency_of_the_test 10
 
 ### NLP task
 ```

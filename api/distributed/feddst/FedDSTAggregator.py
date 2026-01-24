@@ -196,3 +196,4 @@ class FedDSTAggregator(object):
             aggr_scores[k] = aggr_scores[k] / max(score_cnt[k], 1)
 
         return aggr_scores
+

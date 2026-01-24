@@ -1,4 +1,5 @@
 import torch
+from torch import nn
 import random
 import numpy as np 
 import logging
@@ -47,6 +48,12 @@ def pruning(model, layer_density_dict, pruning_strategy, prune_scores=None, mask
 
     new_mask_dict = {}
 
+    # dw_keys = {
+    #     "model." + (mn[6:] if mn.startswith("model.") else mn)
+    #     for mn, m in model.named_modules()
+    #     if isinstance(m, nn.Conv2d) and m.groups == m.in_channels and m.out_channels == m.in_channels
+    # }
+
     for name, weight in model.named_parameters():
         if name in layer_density_dict:
             density = layer_density_dict[name]
@@ -59,13 +66,20 @@ def pruning(model, layer_density_dict, pruning_strategy, prune_scores=None, mask
 
             if pruning_strategy in ["score"]:
                 key = "model." + name.removesuffix(".weight")
+
+                # if key in dw_keys:
+                #     logging.info(f"DEPTHWISE CONV KEYS {key}")
+
+                #     new_mask_dict[name] = old_mask
                 if prune_scores is not None and key in prune_scores:
                     logging.info(f"ENTER SCORE PRUNE WITH KEY {key}")
-                    
+
                     new_mask_dict[name] = score_prune(prune_scores[key], old_mask, num_elements, density)
                 else:
-                    # new_mask_dict[name] = old_mask
-                    new_mask_dict[name] = random_prune(weight, old_mask, num_elements, density)
+                    logging.info(f"KEY HAS NO SCORE {key}")
+
+                    new_mask_dict[name] = old_mask
+                    # new_mask_dict[name] = random_prune(weight, old_mask, num_elements, density)
 
             elif pruning_strategy in ["mag", "magnitude"]:
                 new_mask_dict[name] = magnitude_prune(weight, old_mask, num_elements, density)
@@ -115,6 +129,8 @@ def magnitude_prune(weight, old_mask, num_elements, density):
     return new_mask
 
 def random_prune(weight, old_mask, num_elements, density):
+    old_mask = old_mask.to(weight.device)
+
     weight = weight * old_mask
     num_remain = int(num_elements * density)
     current_num_element = old_mask.sum()

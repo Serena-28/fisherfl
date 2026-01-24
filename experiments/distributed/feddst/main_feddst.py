@@ -27,6 +27,9 @@ from api.data_preprocessing.tinystories.data_loader import load_partition_data_t
 from api.model.cv.resnet_gn import resnet18 as resnet18_gn
 from api.model.cv.mobilenet import mobilenet
 from api.model.cv.resnet import resnet18, resnet56
+
+from api.model.cv.vit import vit_gpt
+
 from api.model.nlp.gpt2 import GPT2Model, GPT2Config
 from torchvision.models import mobilenet_v3_small as MobileNetV3
 from torchvision.models import efficientnet_v2_s as EfficientNetV2
@@ -202,6 +205,8 @@ def create_model(args, model_name, output_dim):
         model = SwinT(num_classes=output_dim)
     elif model_name == "vit":
         model = ViT(image_size=32, num_classes = output_dim)
+    elif model_name == "vit_gpt":
+        model = vit_gpt()
     elif model_name == "mnasnet":
         model = MNASNet(num_classes = output_dim)
     elif model_name == "gpt2":
@@ -257,7 +262,7 @@ if __name__ == "__main__":
             + args.dataset 
             + "_"
             + args.model 
-            + "_divide N (correct batch sz)" # Renaming
+            + "_" # Renaming
             ,
             config=args,
         )
