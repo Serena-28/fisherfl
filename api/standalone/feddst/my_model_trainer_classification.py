@@ -90,14 +90,14 @@ class MyModelTrainer(ModelTrainer):
         else:
             local_epochs = args.epochs
 
-        if round_idx is not None:
-            # min_lr = getattr(args, "min_lr", 0.0)
-            min_lr = 0.0
-            total_rounds = args.comm_round
-            cos_decay = 0.5 * (1 + math.cos(math.pi * round_idx / total_rounds))
-            lr = min_lr + (args.lr - min_lr) * cos_decay
-            for g in optimizer.param_groups:
-                g["lr"] = lr
+        # if round_idx is not None:
+        #     # min_lr = getattr(args, "min_lr", 0.0)
+        #     min_lr = 0.0
+        #     total_rounds = args.comm_round
+        #     cos_decay = 0.5 * (1 + math.cos(math.pi * round_idx / total_rounds))
+        #     lr = min_lr + (args.lr - min_lr) * cos_decay
+        #     for g in optimizer.param_groups:
+        #         g["lr"] = lr
 
         if mode in [2, 3]:
             A_epochs = local_epochs // 2 if args.A_epochs is None else args.A_epochs
