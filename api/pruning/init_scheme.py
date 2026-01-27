@@ -79,7 +79,6 @@ def pruning(model, layer_density_dict, pruning_strategy, prune_scores=None, mask
                     logging.info(f"KEY HAS NO SCORE {key}")
 
                     new_mask_dict[name] = old_mask
-                    # new_mask_dict[name] = random_prune(weight, old_mask, num_elements, density)
 
             elif pruning_strategy in ["mag", "magnitude"]:
                 new_mask_dict[name] = magnitude_prune(weight, old_mask, num_elements, density)
@@ -183,13 +182,14 @@ def sparse_update_step(model, gradients, mask_dict, t, T_end, alpha, scores=None
 
             # pruning
             active_indices = (mask_dict[name].view(-1) == 1).nonzero(as_tuple=False).view(-1)
-
+            
             if active_indices.numel() > 0 and k > 0:
                 flat_w = param.data.view(-1)
 
                 active_indices = active_indices.to(flat_w.device)
 
                 if scores is not None and name.rsplit(".", 1)[0] in scores["prune"]:
+                    # score_active = torch.abs(flat_w).index_select(0, active_indices)
                     score_active = scores["prune"][name.rsplit(".", 1)[0]].to(param.device).view(-1).index_select(0, active_indices)
                 else:
                     score_active = torch.abs(flat_w).index_select(0, active_indices)
@@ -208,6 +208,7 @@ def sparse_update_step(model, gradients, mask_dict, t, T_end, alpha, scores=None
                 inactive_indices = inactive_indices.to(g_flat.device)
 
                 if scores is not None and name.rsplit(".", 1)[0] in scores["grow"]:
+                    # score_inactive = g_flat.index_select(0, inactive_indices)
                     score_inactive = scores["grow"][name.rsplit(".", 1)[0]].to(param.device).view(-1).index_select(0, inactive_indices)
                 else:
                     score_inactive = g_flat.index_select(0, inactive_indices)

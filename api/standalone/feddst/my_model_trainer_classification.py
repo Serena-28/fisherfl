@@ -26,7 +26,7 @@ class MyModelTrainer(ModelTrainer):
         return self.model.scores
 
     @staticmethod
-    def _attach_hooks(model, store, module_types=(nn.Conv2d, nn.Linear)):
+    def _attach_hooks(model, store, module_types=(nn.Conv2d, nn.Linear, nn.Conv1d)):
         handles = []
         for name, module in model.named_modules():
             if not isinstance(module, module_types):
@@ -90,14 +90,14 @@ class MyModelTrainer(ModelTrainer):
         else:
             local_epochs = args.epochs
 
-        # if round_idx is not None:
-        #     # min_lr = getattr(args, "min_lr", 0.0)
-        #     min_lr = 0.0
-        #     total_rounds = args.comm_round
-        #     cos_decay = 0.5 * (1 + math.cos(math.pi * round_idx / total_rounds))
-        #     lr = min_lr + (args.lr - min_lr) * cos_decay
-        #     for g in optimizer.param_groups:
-        #         g["lr"] = lr
+        if round_idx is not None:
+            # min_lr = getattr(args, "min_lr", 0.0)
+            min_lr = 0.0
+            total_rounds = args.comm_round
+            cos_decay = 0.5 * (1 + math.cos(math.pi * round_idx / total_rounds))
+            lr = min_lr + (args.lr - min_lr) * cos_decay
+            for g in optimizer.param_groups:
+                g["lr"] = lr
 
         if mode in [2, 3]:
             A_epochs = local_epochs // 2 if args.A_epochs is None else args.A_epochs
@@ -250,15 +250,6 @@ class MyModelTrainer(ModelTrainer):
             else:
                 model.adjust_mask_dict(gradients, t=round_idx, T_end=args.T_end, alpha=args.adjust_alpha, scores=None)
             model.apply_mask()
-
-            # bn_calib_batches = getattr(args, "bn_calib_batches", 10)
-            # model.train()
-            # with torch.no_grad():
-            #     for i, (x_cal, _) in enumerate(train_data):
-            #         if i >= bn_calib_batches:
-            #             break
-            #         x_cal = x_cal.to(device, non_blocking=True)
-            #         _ = model(x_cal)
             
         for epoch in range(first_epochs, local_epochs):
             batch_loss = []
