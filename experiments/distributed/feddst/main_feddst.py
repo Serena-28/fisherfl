@@ -271,7 +271,7 @@ if __name__ == "__main__":
             + args.dataset 
             + "_"
             + args.model 
-            + "_" # Renaming
+            + "_t_end" # Renaming
             ,
             config=args,
         )

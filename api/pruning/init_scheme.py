@@ -48,12 +48,6 @@ def pruning(model, layer_density_dict, pruning_strategy, prune_scores=None, mask
 
     new_mask_dict = {}
 
-    # dw_keys = {
-    #     "model." + (mn[6:] if mn.startswith("model.") else mn)
-    #     for mn, m in model.named_modules()
-    #     if isinstance(m, nn.Conv2d) and m.groups == m.in_channels and m.out_channels == m.in_channels
-    # }
-
     for name, weight in model.named_parameters():
         if name in layer_density_dict:
             density = layer_density_dict[name]
@@ -67,10 +61,6 @@ def pruning(model, layer_density_dict, pruning_strategy, prune_scores=None, mask
             if pruning_strategy in ["score"]:
                 key = "model." + name.removesuffix(".weight")
 
-                # if key in dw_keys:
-                #     logging.info(f"DEPTHWISE CONV KEYS {key}")
-
-                #     new_mask_dict[name] = old_mask
                 if prune_scores is not None and key in prune_scores:
                     logging.info(f"ENTER SCORE PRUNE WITH KEY {key}")
 
